@@ -28,6 +28,17 @@ cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
 <dict>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
+    <key>CFBundleAllowMixedLocalizations</key>
+    <true/>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>zh-Hans</string>
+        <string>zh-Hant</string>
+        <string>ja</string>
+        <string>ko</string>
+        <string>vi</string>
+    </array>
     <key>CFBundleExecutable</key>
     <string>AirCard</string>
     <key>CFBundleIdentifier</key>
@@ -74,6 +85,25 @@ cp aircard.py "$RESOURCES_DIR/"
 cp aircard_backend.py "$RESOURCES_DIR/"
 cp card_assets.py "$RESOURCES_DIR/"
 
+# Install localization tables. Each Localizations/<lang>.lproj/Localizable.strings
+# is copied verbatim into Contents/Resources, where Foundation resolves it
+# against the user's preferred system languages at runtime. Adding a language
+# means adding a folder here — no code change is required.
+if [ -d "Localizations" ]; then
+    for lproj in Localizations/*.lproj; do
+        [ -d "$lproj" ] || continue
+        cp -R "$lproj" "$RESOURCES_DIR/"
+    done
+fi
+
+# The English table doubles as the key reference used by
+# tools/check_localizations.py, so a bundle without it cannot be validated
+# (translations would silently fall back to their keys).
+if [ ! -f "${RESOURCES_DIR}/en.lproj/Localizable.strings" ]; then
+    echo "ERROR: Localizations/en.lproj/Localizable.strings was not installed." >&2
+    exit 1
+fi
+
 # A bundle without these cannot talk to a device at all, so fail here instead
 # of shipping an app that reports "No iPhone found" for every user.
 for tool in device_helper airtraffic_host; do
@@ -91,8 +121,8 @@ if [ -z "${SWIFT_SDK:-}" ]; then
         SWIFT_SDK="$CLT_SWIFTUI_SDK"
     fi
 fi
-swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target arm64-apple-macosx14.0 AirCardApp.swift -o build/AirCard_arm64
-swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target x86_64-apple-macosx14.0 AirCardApp.swift -o build/AirCard_x86_64
+swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target arm64-apple-macosx14.0 AirCardApp.swift Localization.swift -o build/AirCard_arm64
+swiftc -sdk "$SWIFT_SDK" -O -parse-as-library -target x86_64-apple-macosx14.0 AirCardApp.swift Localization.swift -o build/AirCard_x86_64
 lipo -create -output "${MACOS_DIR}/AirCard" build/AirCard_arm64 build/AirCard_x86_64
 chmod +x "${MACOS_DIR}/AirCard"
 

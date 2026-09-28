@@ -96,6 +96,48 @@ This builds universal binaries (`arm64` + `x86_64`), bundles dependencies into `
 
 ---
 
+## Localization
+
+AirCard ships with six UI languages and follows the macOS **system language** automatically:
+
+| Language | Folder |
+| --- | --- |
+| English (reference) | `Localizations/en.lproj` |
+| 简体中文 | `Localizations/zh-Hans.lproj` |
+| 繁體中文（台灣） | `Localizations/zh-Hant.lproj` |
+| 日本語 | `Localizations/ja.lproj` |
+| 한국어 | `Localizations/ko.lproj` |
+| Tiếng Việt | `Localizations/vi.lproj` |
+
+`build.sh` copies every `Localizations/<lang>.lproj` folder into `Contents/Resources`, where Foundation resolves it at runtime — no code change is needed to add or update a language.
+
+### How the tables work
+- **Keys are the English source strings** used in `AirCardApp.swift`. SwiftUI's `Text("...")`, `Button("...")`, `Label(...)` and `.help(...)` look these up automatically; dynamic strings go through `L()` / `Lf()` in `Localization.swift` (e.g. `Lf("Card #%d", index + 1)`).
+- Progress messages from `aircard_backend.py` are emitted as a semantic `code` + `params` pair and rendered by `BackendMessage` using the same English templates, so the status bar and activity log are localized too. Older backends that only send a `message` field still display correctly.
+- A missing key falls back to its English text, so partial translations degrade gracefully.
+- `%@` / `%d` placeholders are part of the key and must keep the same count, type and order.
+- Brand names and technical identifiers (`AirCard`, `.passthm`, `TelephonyUI-*`, `device_helper`, `airwallet`…) stay in English on purpose.
+
+### Replacing translations
+1. Open the target `Localizations/<lang>.lproj/Localizable.strings` and edit the text **after** the `=` sign only.
+2. Never rename the keys on the left.
+3. Keep `**bold**` markers and `\n` escapes intact.
+
+### Adding a new language
+1. Copy `Localizations/en.lproj` to `Localizations/<code>.lproj` (for example `de.lproj`).
+2. Translate the values, keeping every key.
+3. Add the code to `CFBundleLocalizations` inside `build.sh`.
+4. Run `./build.sh` — the new folder is installed automatically.
+
+### Verifying coverage
+```sh
+python3 tools/check_localizations.py            # report
+python3 tools/check_localizations.py --strict   # non-zero exit when incomplete
+```
+The script extracts the keys referenced by the Swift sources, compares them with `en.lproj`, and then reports missing, extra or placeholder-mismatched entries for every other language.
+
+---
+
 ## Contributors
 - **[@mak5er](https://github.com/mak5er)** (Developer) — [GitHub](https://github.com/mak5er) · [Twitter / X](https://x.com/mak5er)
 - **[@Lumid-Off](https://github.com/Lumid-Off)** (Contributor & Developer) — [GitHub](https://github.com/Lumid-Off) · [Twitter / X](https://x.com/LumidOff)

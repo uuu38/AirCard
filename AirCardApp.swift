@@ -436,7 +436,7 @@ class PasscodeThemeExporter {
             throw NSError(
                 domain: "PasscodeThemeExporter",
                 code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: "Failed to create .passthm zip archive (exit code \(process.terminationStatus))"]
+                userInfo: [NSLocalizedDescriptionKey: Lf("Failed to create .passthm zip archive (exit code %d)", Int(process.terminationStatus))]
             )
         }
     }
@@ -489,7 +489,7 @@ class AppViewModel: ObservableObject {
     
     @Published var isFlashing = false
     @Published var progress: Double = 0.0
-    @Published var statusText: String = "Ready"
+    @Published var statusText: String = L("Ready")
     @Published var logs: [String] = []
     @Published var showSuccessAlert = false
     @Published var errorMessage: String?
@@ -499,6 +499,9 @@ class AppViewModel: ObservableObject {
     @Published var showLogs = false
     
     private var scanProcess: Process?
+    /// True while the status bar shows the "tap your card" scanning prompt.
+    /// Tracked explicitly instead of matching the (localized) status text.
+    private(set) var isAwaitingCardTap = false
     private let scriptDir: String
     private let storageKey = "mak5er.aircard.savedCards"
     private let legacyStorageKey1 = "mak5er.savedCards"
@@ -658,7 +661,7 @@ class AppViewModel: ObservableObject {
         loaded.removeAll { dummyHashes.contains($0) || ($0.contains("-") && $0.count == 36) }
         
         self.cards = loaded.map { CardItem(id: $0, isSelected: true) }
-        log("Loaded \(cards.count) real card(s) from storage.")
+        log(Lf("Loaded %d real card(s) from storage.", cards.count))
     }
     
     func saveCards() {
@@ -679,7 +682,7 @@ class AppViewModel: ObservableObject {
             if clean.count >= 16 && clean.count <= 64 && !cards.contains(where: { $0.id == clean }) {
                 cards.append(CardItem(id: clean, isSelected: true))
                 addedCount += 1
-                log("Added card: \(clean)")
+                log(Lf("Added card: %@", clean))
             }
         }
         if addedCount > 0 {
@@ -690,13 +693,13 @@ class AppViewModel: ObservableObject {
     func deleteCard(id: String) {
         cards.removeAll { $0.id == id }
         saveCards()
-        log("Removed card: \(id)")
+        log(Lf("Removed card: %@", id))
     }
     
     func clearAllCards() {
         cards.removeAll()
         saveCards()
-        log("Cleared all cards.")
+        log(L("Cleared all cards."))
     }
     
     func setCardImage(for cardId: String, url: URL) {
@@ -704,7 +707,7 @@ class AppViewModel: ObservableObject {
             cards[idx].customImageURL = url
             cards[idx].customImage = NSImage(contentsOf: url)
             cards[idx].isSelected = true
-            log("Assigned custom skin to card: \(cardId.prefix(12))...")
+            log(Lf("Assigned custom skin to card: %@...", String(cardId.prefix(12))))
         }
     }
     
@@ -712,7 +715,7 @@ class AppViewModel: ObservableObject {
         if let idx = cards.firstIndex(where: { $0.id == cardId }) {
             cards[idx].customImageURL = nil
             cards[idx].customImage = nil
-            log("Cleared custom skin for: \(cardId.prefix(12))...")
+            log(Lf("Cleared custom skin for: %@...", String(cardId.prefix(12))))
         }
     }
     
@@ -720,7 +723,7 @@ class AppViewModel: ObservableObject {
     
     func checkDevice() {
         isCheckingDevice = true
-        statusText = "Checking connected devices..."
+        statusText = L("Checking connected devices...")
         let scriptDir = self.scriptDir
         
         Task.detached {
@@ -744,26 +747,26 @@ class AppViewModel: ObservableObject {
                         self.device = dev
                         self.isCheckingDevice = false
                         if dev.connected {
-                            self.statusText = "Connected to \(dev.name ?? "iPhone")"
-                            self.log("Device connected: \(dev.name ?? "iPhone") (\(dev.product ?? ""), iOS \(dev.version ?? ""))")
+                            self.statusText = Lf("Connected to %@", dev.name ?? "iPhone")
+                            self.log(Lf("Device connected: %@ (%@, iOS %@)", dev.name ?? "iPhone", dev.product ?? "", dev.version ?? ""))
                             self.applyDevicePreferences(from: dev)
                         } else if dev.error == "device_helper_missing" {
-                            self.statusText = "Device tools are missing from this build."
-                            self.log("Bundled device_helper not found — detection cannot run.")
+                            self.statusText = L("Device tools are missing from this build.")
+                            self.log(L("Bundled device_helper not found — detection cannot run."))
                         } else {
-                            self.statusText = "No iPhone found. Please connect via USB."
+                            self.statusText = L("No iPhone found. Please connect via USB.")
                         }
                     }
                 } else {
                     await MainActor.run {
                         self.isCheckingDevice = false
-                        self.statusText = "No iPhone found. Please connect via USB."
+                        self.statusText = L("No iPhone found. Please connect via USB.")
                     }
                 }
             } catch {
                 await MainActor.run {
                     self.isCheckingDevice = false
-                    self.statusText = "Device detection failed: \(error.localizedDescription)"
+                    self.statusText = Lf("Device detection failed: %@", error.localizedDescription)
                 }
             }
         }
@@ -796,7 +799,7 @@ class AppViewModel: ObservableObject {
             self.passcodeBoldTarget = isBold ? .boldOnly : .regularOnly
         }
         
-        self.log("  ⚡ Auto-configured passcode target: \(self.targetTelephonyVersion), language: \(self.passcodeLanguageTarget.rawValue), font: \(self.passcodeBoldTarget.rawValue)")
+        self.log(Lf("  ⚡ Auto-configured passcode target: %@, language: %@, font: %@", self.targetTelephonyVersion, L(self.passcodeLanguageTarget.rawValue), L(self.passcodeBoldTarget.rawValue)))
     }
     
     // MARK: - Live Card Scanner
@@ -812,17 +815,18 @@ class AppViewModel: ObservableObject {
     func startCardScanning() {
         guard !isScanningCards else { return }
         guard let deviceHelper = AppViewModel.deviceHelperExecutableURL else {
-            errorMessage = "Device tools are missing from this build."
-            log("Bundled device_helper not found — cannot scan.")
+            errorMessage = L("Device tools are missing from this build.")
+            log(L("Bundled device_helper not found — cannot scan."))
             return
         }
         guard let udid = device?.udid else {
-            errorMessage = "No iPhone connected."
+            errorMessage = L("No iPhone connected.")
             return
         }
         isScanningCards = true
-        statusText = "Double-click Side button, pass Face ID, then tap your card..."
-        log("Started scanning device logs for cards...")
+        isAwaitingCardTap = true
+        statusText = L("Double-click Side button, pass Face ID, then tap your card...")
+        log(L("Started scanning device logs for cards..."))
         
         let pipe = Pipe()
         let proc = Process()
@@ -839,8 +843,9 @@ class AppViewModel: ObservableObject {
         } catch {
             scanProcess = nil
             isScanningCards = false
-            statusText = "Could not start card scanning."
-            log("Syslog monitor failed to start: \(error.localizedDescription)")
+            isAwaitingCardTap = false
+            statusText = L("Could not start card scanning.")
+            log(Lf("Syslog monitor failed to start: %@", error.localizedDescription))
             return
         }
         
@@ -916,7 +921,7 @@ class AppViewModel: ObservableObject {
                                         if !self.cards.contains(where: { $0.id == candidate }) {
                                             self.cards.append(CardItem(id: candidate, isSelected: true))
                                             self.saveCards()
-                                            self.log("Found card: \(candidate)")
+                                            self.log(Lf("Found card: %@", candidate))
                                             NSSound(named: "Glass")?.play()
                                         }
                                     }
@@ -931,8 +936,9 @@ class AppViewModel: ObservableObject {
                     guard self.scanProcess === proc else { return }
                     self.scanProcess = nil
                     self.isScanningCards = false
-                    self.statusText = "Card scanning ended. Check the log and reconnect the iPhone to retry."
-                    self.log("Syslog monitor exited (status \(proc.terminationStatus)). Total cards: \(self.cards.count).")
+                    self.isAwaitingCardTap = false
+                    self.statusText = L("Card scanning ended. Check the log and reconnect the iPhone to retry.")
+                    self.log(Lf("Syslog monitor exited (status %d). Total cards: %d.", proc.terminationStatus, self.cards.count))
                     self.saveCards()
                 }
             } catch {
@@ -941,9 +947,10 @@ class AppViewModel: ObservableObject {
                 await MainActor.run {
                     guard self.scanProcess === proc else { return }
                     self.scanProcess = nil
-                    self.log("Syslog monitor stopped: \(error.localizedDescription)")
+                    self.log(Lf("Syslog monitor stopped: %@", error.localizedDescription))
                     self.isScanningCards = false
-                    self.statusText = "Card scanning failed. Check the log and retry."
+                    self.isAwaitingCardTap = false
+                    self.statusText = L("Card scanning failed. Check the log and retry.")
                 }
             }
         }
@@ -954,30 +961,37 @@ class AppViewModel: ObservableObject {
         scanProcess = nil
         if let process, process.isRunning { process.terminate() }
         isScanningCards = false
-        if statusText.contains("Double-click Side button") {
-            statusText = "Ready"
-        }
+        resetStatusIfAwaitingCardTap()
         saveCards()
-        log("Scanning stopped. Total cards: \(cards.count).")
+        log(Lf("Scanning stopped. Total cards: %d.", cards.count))
     }
     
+    /// Restores the idle status when the "tap your card" prompt is showing.
+    /// Used instead of matching the (localized) status text by content.
+    func resetStatusIfAwaitingCardTap() {
+        if isAwaitingCardTap {
+            isAwaitingCardTap = false
+            statusText = L("Ready")
+        }
+    }
+
     // MARK: - Skin Application
-    
+
     func applySkin() {
         guard let udid = device?.udid else {
-            errorMessage = "No iPhone connected."
+            errorMessage = L("No iPhone connected.")
             return
         }
         let selectedCardsWithSkin = cards.filter { $0.isSelected && $0.customImageURL != nil }
         guard !selectedCardsWithSkin.isEmpty else {
-            errorMessage = "Please assign a skin image to at least one selected card."
+            errorMessage = L("Please assign a skin image to at least one selected card.")
             return
         }
-        
+
         isFlashing = true
         showLogs = true
         progress = 0.0
-        log("Starting skin application for \(selectedCardsWithSkin.count) card(s)...")
+        log(Lf("Starting skin application for %d card(s)...", selectedCardsWithSkin.count))
         let scriptDir = self.scriptDir
         
         Task.detached {
@@ -989,9 +1003,9 @@ class AppViewModel: ObservableObject {
                 let preparedPath = "/tmp/aircard_prep_\(idx).png"
                 
                 await MainActor.run {
-                    self.statusText = "[\(idx + 1)/\(selectedCardsWithSkin.count)] Preparing skin for \(card.id.prefix(10))..."
+                    self.statusText = Lf("[%d/%d] Preparing skin for %@...", idx + 1, selectedCardsWithSkin.count, String(card.id.prefix(10)))
                     self.progress = (Double(idx) + 0.05) / totalCards
-                    self.log("Flashing card [\(idx + 1)/\(selectedCardsWithSkin.count)]: \(card.id)")
+                    self.log(Lf("Flashing card [%d/%d]: %@", idx + 1, selectedCardsWithSkin.count, card.id))
                 }
                 
                 // 1. Prepare image natively in Swift (0 external dependencies!)
@@ -1033,7 +1047,7 @@ class AppViewModel: ObservableObject {
                     let message = error.localizedDescription
                     flashFailed = true
                     await MainActor.run {
-                        self.log("Failed to launch card flasher: \(message)")
+                        self.log(Lf("Failed to launch card flasher: %@", message))
                     }
                     break
                 }
@@ -1045,18 +1059,18 @@ class AppViewModel: ObservableObject {
                     guard !line.isEmpty,
                           let lineData = line.data(using: .utf8),
                           let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-                          let msg = json["message"] as? String else { return }
-                    
+                          let msg = BackendMessage.localized(from: json) else { return }
+
                     let step = (json["step"] as? NSNumber)?.doubleValue
                     let total = (json["total"] as? NSNumber)?.doubleValue
-                    
+
                     await MainActor.run {
                         if let step = step, let total = total, total > 0 {
                             let subProgress = step / total
                             let currentProgress = (Double(idx) + subProgress) / totalCards
                             self.progress = min(currentProgress, 1.0)
                         }
-                        self.statusText = "[\(idx + 1)/\(selectedCardsWithSkin.count)] \(msg)"
+                        self.statusText = Lf("[%d/%d] %@", idx + 1, selectedCardsWithSkin.count, msg)
                         self.log("  \(msg)")
                     }
                 }
@@ -1096,7 +1110,7 @@ class AppViewModel: ObservableObject {
                 if flashProcess.terminationStatus != 0 {
                     flashFailed = true
                     await MainActor.run {
-                        self.log("Card update failed for \(card.id.prefix(12))...")
+                        self.log(Lf("Card update failed for %@...", String(card.id.prefix(12))))
                     }
                     break
                 }
@@ -1110,13 +1124,13 @@ class AppViewModel: ObservableObject {
             await MainActor.run {
                 self.isFlashing = false
                 if didFail {
-                    self.statusText = "Failed to apply card skins."
-                    self.errorMessage = "One or more cards could not be updated. Check the log and try again."
-                    self.log("Skin application stopped after a card update failed.")
+                    self.statusText = L("Failed to apply card skins.")
+                    self.errorMessage = L("One or more cards could not be updated. Check the log and try again.")
+                    self.log(L("Skin application stopped after a card update failed."))
                 } else {
-                    self.statusText = "Complete! All cards updated."
+                    self.statusText = L("Complete! All cards updated.")
                     self.showSuccessAlert = true
-                    self.log("Skins successfully applied to all selected cards!")
+                    self.log(L("Skins successfully applied to all selected cards!"))
                 }
             }
         }
@@ -1169,13 +1183,13 @@ class AppViewModel: ObservableObject {
                     self.loadedPasscodeTheme = themeInfo
                     self.targetTelephonyVersion = detectedVersion
                     self.isInspectingTheme = false
-                    self.statusText = "Loaded passcode theme '\(name)' (\(fileCount) assets)"
-                    self.log("Loaded .passthm: \(name) [\(detectedVersion)] with \(fileCount) image assets")
+                    self.statusText = Lf("Loaded passcode theme '%@' (%d assets)", name, fileCount)
+                    self.log(Lf("Loaded .passthm: %@ [%@] with %d image assets", name, detectedVersion, fileCount))
                 }
             } else {
                 await MainActor.run {
                     self.isInspectingTheme = false
-                    self.errorMessage = "Failed to inspect .passthm file"
+                    self.errorMessage = L("Failed to inspect .passthm file")
                 }
             }
         }
@@ -1184,15 +1198,15 @@ class AppViewModel: ObservableObject {
     func flashPasscodeTheme() {
         guard let theme = loadedPasscodeTheme else { return }
         guard let dev = device, dev.connected, let udid = dev.udid else {
-            errorMessage = "Please connect and trust your iPhone first."
+            errorMessage = L("Please connect and trust your iPhone first.")
             return
         }
         
         isFlashing = true
         showLogs = true
         progress = 0.0
-        statusText = "Starting passcode theme flash..."
-        log("Flashing passcode theme '\(theme.name)' to device...")
+        statusText = L("Starting passcode theme flash...")
+        log(Lf("Flashing passcode theme '%@' to device...", theme.name))
         let scriptDir = self.scriptDir
         let targetVer = self.targetTelephonyVersion
         let targetLang = self.passcodeLanguageTarget.code
@@ -1234,7 +1248,7 @@ class AppViewModel: ObservableObject {
                 guard !line.isEmpty,
                       let lineData = line.data(using: .utf8),
                       let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-                      let msg = json["message"] as? String else { return }
+                      let msg = BackendMessage.localized(from: json) else { return }
                 
                 let step = (json["step"] as? NSNumber)?.doubleValue
                 let total = (json["total"] as? NSNumber)?.doubleValue
@@ -1286,11 +1300,11 @@ class AppViewModel: ObservableObject {
                 self.isFlashing = false
                 if exitCode == 0 && self.errorMessage == nil {
                     self.progress = 1.0
-                    self.statusText = "Passcode theme applied successfully!"
+                    self.statusText = L("Passcode theme applied successfully!")
                     self.showSuccessAlert = true
-                    self.log("Passcode theme '\(theme.name)' successfully flashed!")
+                    self.log(Lf("Passcode theme '%@' successfully flashed!", theme.name))
                 } else {
-                    let err = self.errorMessage ?? "Flashing failed (exit code \(exitCode))"
+                    let err = self.errorMessage ?? Lf("Flashing failed (exit code %d)", Int(exitCode))
                     self.statusText = err
                     self.log("ERROR: \(err)")
                 }
@@ -1326,7 +1340,7 @@ class AppViewModel: ObservableObject {
         creatorPosterZoom = 1.0
         creatorPosterOffset = .zero
         updatePosterSlicing()
-        statusText = "Poster image loaded · Ready to frame and slice"
+        statusText = L("Poster image loaded · Ready to frame and slice")
     }
     
     func setIndividualKey(digit: String, image: NSImage) {
@@ -1335,7 +1349,7 @@ class AppViewModel: ObservableObject {
         creatorIndividualZooms[digit] = 1.0
         selectedKeyDigit = digit
         updateIndividualKey(digit: digit)
-        statusText = "Updated key \(digit) · Drag on dialer to reposition or use zoom slider"
+        statusText = Lf("Updated key %@ · Drag on dialer to reposition or use zoom slider", digit)
     }
     
     func updateIndividualKey(digit: String) {
@@ -1361,7 +1375,7 @@ class AppViewModel: ObservableObject {
         if selectedKeyDigit == digit {
             selectedKeyDigit = nil
         }
-        statusText = "Cleared key \(digit)"
+        statusText = Lf("Cleared key %@", digit)
     }
     
     func clearAllIndividualKeys() {
@@ -1370,7 +1384,7 @@ class AppViewModel: ObservableObject {
         creatorIndividualOffsets.removeAll()
         creatorIndividualZooms.removeAll()
         selectedKeyDigit = nil
-        statusText = "Cleared all custom keys"
+        statusText = L("Cleared all custom keys")
     }
     
     func adoptPosterSlicesToIndividualKeys() {
@@ -1380,7 +1394,7 @@ class AppViewModel: ObservableObject {
             creatorIndividualOffsets[k] = .zero
             creatorIndividualZooms[k] = 1.0
         }
-        statusText = "Adopted poster slices to individual keys"
+        statusText = L("Adopted poster slices to individual keys")
     }
     
     func editLoadedThemeInCreator() {
@@ -1394,8 +1408,8 @@ class AppViewModel: ObservableObject {
         selectedKeyDigit = nil
         creatorSubMode = .individualKeys
         passcodeTabMode = .themeCreator
-        statusText = "Loaded '\(theme.name)' into Theme Creator (\(theme.keysPreview.count) keys ready to edit)"
-        log("Imported theme '\(theme.name)' into Creator for custom editing")
+        statusText = Lf("Loaded '%@' into Theme Creator (%d keys ready to edit)", theme.name, theme.keysPreview.count)
+        log(Lf("Imported theme '%@' into Creator for custom editing", theme.name))
     }
     
     func clearCreator() {
@@ -1404,17 +1418,17 @@ class AppViewModel: ObservableObject {
         creatorPosterOffset = .zero
         creatorSlicedKeys.removeAll()
         clearAllIndividualKeys()
-        statusText = "Theme Creator reset"
+        statusText = L("Theme Creator reset")
     }
     
     func flashCreatedTheme() {
         let keys = effectiveCreatorKeys
         guard !keys.isEmpty else {
-            errorMessage = "Please add at least one key icon or import a poster image first."
+            errorMessage = L("Please add at least one key icon or import a poster image first.")
             return
         }
         guard let dev = device, dev.connected, dev.udid != nil else {
-            errorMessage = "Please connect and trust your iPhone first."
+            errorMessage = L("Please connect and trust your iPhone first.")
             return
         }
         
@@ -1423,12 +1437,12 @@ class AppViewModel: ObservableObject {
             language: passcodeLanguageTarget,
             boldMode: passcodeBoldTarget
         ) else {
-            errorMessage = "Failed to package theme for flashing."
+            errorMessage = L("Failed to package theme for flashing.")
             return
         }
         
         let themeInfo = PasscodeThemeInfo(
-            name: "Created Theme",
+            name: L("Created Theme"),
             filePath: stagedURL.path,
             detectedVersion: targetTelephonyVersion,
             fileCount: keys.count * 4,
@@ -1548,7 +1562,7 @@ struct WalletCardView: View {
                                 .scaleEffect(isHovered ? 1.08 : 1.0)
                                 .animation(.spring(response: 0.3), value: isHovered)
                             
-                            Text(isTargeted ? "Drop image here" : "Assign Card Skin")
+                            Text(isTargeted ? L("Drop image here") : L("Assign Card Skin"))
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                                 .foregroundColor(.primary)
@@ -1618,7 +1632,7 @@ struct WalletCardView: View {
                     .labelsHidden()
                     .help("Include in flash")
                 
-                Text("Card #\(cardIndex + 1)")
+                Text(Lf("Card #%d", cardIndex + 1))
                     .font(.system(size: 12, weight: .semibold))
                 
                 // Monospace Hash Pill with Copy
@@ -1638,7 +1652,7 @@ struct WalletCardView: View {
                             .foregroundColor(copied ? .green : .secondary)
                     }
                     .buttonStyle(.plain)
-                    .help(copied ? "Copied!" : "Copy full hash")
+                    .help(Text(copied ? L("Copied!") : L("Copy full hash")))
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
@@ -1787,9 +1801,7 @@ struct ContentView: View {
             if newTab == .passcodeThemes && vm.isScanningCards {
                 vm.stopCardScanning()
             }
-            if vm.statusText.contains("Double-click Side button") {
-                vm.statusText = "Ready"
-            }
+            vm.resetStatusIfAwaitingCardTap()
         }
     }
     
@@ -1824,7 +1836,7 @@ struct ContentView: View {
             // Tab Switcher
             Picker("", selection: $vm.selectedTab) {
                 ForEach(AppTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
+                    Text(L(tab.rawValue)).tag(tab)
                 }
             }
             .pickerStyle(.segmented)
@@ -1894,7 +1906,7 @@ struct ContentView: View {
                         Image(systemName: "wave.3.forward.circle.fill")
                             .frame(width: 16, height: 16)
                     }
-                    Text(vm.isScanningCards ? "Stop Scanning" : "Scan Cards")
+                    Text(vm.isScanningCards ? L("Stop Scanning") : L("Scan Cards"))
                         .fontWeight(.semibold)
                 }
             }
@@ -2043,7 +2055,7 @@ struct ContentView: View {
             // Mode Switcher: [Apply .passthm] | [Theme Creator]
             Picker("", selection: $vm.passcodeTabMode) {
                 ForEach(PasscodeTabMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
+                    Text(L(mode.rawValue)).tag(mode)
                 }
             }
             .pickerStyle(.segmented)
@@ -2059,7 +2071,7 @@ struct ContentView: View {
                 .controlSize(.regular)
             } else {
                 Button(action: { openPosterPicker() }) {
-                    Label(vm.creatorPosterImage == nil ? "Choose Poster..." : "Change Poster...", systemImage: "photo")
+                    Label(vm.creatorPosterImage == nil ? L("Choose Poster...") : L("Change Poster..."), systemImage: "photo")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.purple)
@@ -2210,7 +2222,7 @@ struct ContentView: View {
                         }
                     }
                     
-                    Text("\(theme.fileCount) artwork assets loaded · Ready to flash to iPhone")
+                    Text(Lf("%d artwork assets loaded · Ready to flash to iPhone", theme.fileCount))
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     
@@ -2386,7 +2398,7 @@ struct ContentView: View {
             // Mode Selector: Poster Slice vs Individual Keys
             Picker("", selection: $vm.creatorSubMode) {
                 ForEach(CreatorSubMode.allCases) { subMode in
-                    Text(subMode.rawValue).tag(subMode)
+                    Text(L(subMode.rawValue)).tag(subMode)
                 }
             }
             .pickerStyle(.segmented)
@@ -2486,7 +2498,7 @@ struct ContentView: View {
                         vm.updatePosterSlicing()
                     }
                     
-                    Text(vm.creatorMaskToCircles ? "Artwork is clipped into individual circular button icons." : "Seamless artwork spans across dialer keys without circular cuts (Adobe Dog style).")
+                    Text(vm.creatorMaskToCircles ? L("Artwork is clipped into individual circular button icons.") : L("Seamless artwork spans across dialer keys without circular cuts (Adobe Dog style)."))
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -2558,7 +2570,7 @@ struct ContentView: View {
                             .foregroundColor(.secondary)
                         Spacer()
                         if let sel = vm.selectedKeyDigit {
-                            Button("Deselect Key \(sel)") {
+                            Button(Lf("Deselect Key %@", sel)) {
                                 vm.selectedKeyDigit = nil
                             }
                             .buttonStyle(.link)
@@ -2570,7 +2582,7 @@ struct ContentView: View {
                         // Per-key framing controls
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
-                                Label("Key \(selDigit) Framing", systemImage: "crop")
+                                Label(Lf("Key %@ Framing", selDigit), systemImage: "crop")
                                     .font(.subheadline)
                                     .fontWeight(.bold)
                                     .foregroundColor(.purple)
@@ -2619,7 +2631,7 @@ struct ContentView: View {
                                 Image(systemName: "hand.draw")
                                     .foregroundColor(.secondary)
                                     .font(.caption2)
-                                Text("Drag Key \(selDigit) on dialer preview to reposition")
+                                Text(Lf("Drag Key %@ on dialer preview to reposition", selDigit))
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
                             }
@@ -2658,7 +2670,7 @@ struct ContentView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundColor(.accentColor)
-                        Text("\(vm.creatorCustomKeys.count) of 10 keys configured")
+                        Text(Lf("%d of 10 keys configured", vm.creatorCustomKeys.count))
                             .font(.caption)
                             .fontWeight(.medium)
                     }
@@ -2854,7 +2866,7 @@ struct ContentView: View {
         }
         .contextMenu {
             if vm.creatorSubMode == .individualKeys {
-                Button("Change Key \(btn.digit)...") {
+                Button(Lf("Change Key %@...", btn.digit)) {
                     openIndividualKeyPicker(for: btn.digit)
                 }
                 if customIndividualImage != nil {
@@ -2864,7 +2876,7 @@ struct ContentView: View {
                         dragKeyStartOffsets[btn.digit] = .zero
                         vm.updateIndividualKey(digit: btn.digit)
                     }
-                    Button("Clear Key \(btn.digit)") {
+                    Button(Lf("Clear Key %@", btn.digit)) {
                         vm.clearIndividualKey(digit: btn.digit)
                     }
                 }
@@ -2988,7 +3000,7 @@ struct ContentView: View {
                 
                 Picker("", selection: $vm.passcodeLanguageTarget) {
                     ForEach(PasscodeLanguageTarget.allCases) { item in
-                        Text(item.rawValue).tag(item)
+                        Text(L(item.rawValue)).tag(item)
                     }
                 }
                 .pickerStyle(.menu)
@@ -3003,7 +3015,7 @@ struct ContentView: View {
                 
                 Picker("", selection: $vm.passcodeBoldTarget) {
                     ForEach(PasscodeBoldTarget.allCases) { item in
-                        Text(item.rawValue).tag(item)
+                        Text(L(item.rawValue)).tag(item)
                     }
                 }
                 .pickerStyle(.menu)
@@ -3023,7 +3035,7 @@ struct ContentView: View {
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text("Fast mode selected: only targets \(vm.passcodeLanguageTarget.rawValue) with \(vm.passcodeBoldTarget.rawValue).")
+                    Text(Lf("Fast mode selected: only targets %@ with %@.", L(vm.passcodeLanguageTarget.rawValue), L(vm.passcodeBoldTarget.rawValue)))
                         .font(.system(size: 9))
                         .foregroundColor(.primary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -3110,7 +3122,7 @@ struct ContentView: View {
                             let count = vm.effectiveCreatorKeys.count
                             let targetInfo = "\(vm.targetTelephonyVersion) · \(vm.passcodeLanguageTarget.code.uppercased()) · \(vm.passcodeBoldTarget.code)"
                             if count > 0 {
-                                Text("Theme Creator · \(count) of 10 keys configured · Target: \(targetInfo)")
+                                Text(Lf("Theme Creator · %d of 10 keys configured · Target: %@", count, targetInfo))
                                     .font(.system(size: 10))
                                     .foregroundColor(.secondary)
                             } else {
@@ -3120,7 +3132,7 @@ struct ContentView: View {
                             }
                         } else if let theme = vm.loadedPasscodeTheme {
                             let targetInfo = "\(vm.targetTelephonyVersion) · \(vm.passcodeLanguageTarget.code.uppercased()) · \(vm.passcodeBoldTarget.code)"
-                            Text("\(theme.fileCount) source assets loaded · Target: \(targetInfo)")
+                            Text(Lf("%d source assets loaded · Target: %@", theme.fileCount, targetInfo))
                                 .font(.system(size: 10))
                                 .foregroundColor(.secondary)
                         } else {
@@ -3129,7 +3141,7 @@ struct ContentView: View {
                                 .foregroundColor(.secondary)
                         }
                     } else if !vm.cards.isEmpty {
-                        Text("\(vm.cards.filter { $0.isSelected }.count) of \(vm.cards.count) cards selected · \(readyToFlashCount) ready to flash")
+                        Text(Lf("%d of %d cards selected · %d ready to flash", vm.cards.filter { $0.isSelected }.count, vm.cards.count, readyToFlashCount))
                             .font(.system(size: 10))
                             .foregroundColor(.secondary)
                     }
@@ -3164,7 +3176,7 @@ struct ContentView: View {
                                     Image(systemName: "lock.shield.fill")
                                         .frame(width: 16, height: 16)
                                 }
-                                Text(vm.isFlashing ? "Flashing Passcode..." : "Flash to iPhone")
+                                Text(vm.isFlashing ? L("Flashing Passcode...") : L("Flash to iPhone"))
                                     .fontWeight(.semibold)
                             }
                             .padding(.horizontal, 8)
@@ -3184,7 +3196,7 @@ struct ContentView: View {
                                     Image(systemName: "lock.shield.fill")
                                         .frame(width: 16, height: 16)
                                 }
-                                Text(vm.isFlashing ? "Flashing Passcode..." : "Flash Passcode Theme")
+                                Text(vm.isFlashing ? L("Flashing Passcode...") : L("Flash Passcode Theme"))
                                     .fontWeight(.semibold)
                             }
                             .padding(.horizontal, 8)
@@ -3205,7 +3217,7 @@ struct ContentView: View {
                                 Image(systemName: "sparkles")
                                     .frame(width: 16, height: 16)
                             }
-                            Text(vm.isFlashing ? "Flashing Cards..." : (readyToFlashCount > 0 ? "Flash Skins (\(readyToFlashCount) Cards)" : "Flash Skins"))
+                            Text(vm.isFlashing ? L("Flashing Cards...") : (readyToFlashCount > 0 ? Lf("Flash Skins (%d Cards)", readyToFlashCount) : L("Flash Skins")))
                                 .fontWeight(.semibold)
                         }
                         .padding(.horizontal, 8)
@@ -3354,7 +3366,7 @@ struct ContentView: View {
         panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        panel.message = "Choose a custom skin for card \(cardId.prefix(12))..."
+        panel.message = Lf("Choose a custom skin for card %@...", String(cardId.prefix(12)))
         if panel.runModal() == .OK, let url = panel.url {
             vm.setCardImage(for: cardId, url: url)
         }
@@ -3365,7 +3377,7 @@ struct ContentView: View {
         panel.allowedContentTypes = [.image]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        panel.message = "Choose a skin to assign to all selected cards..."
+        panel.message = L("Choose a skin to assign to all selected cards...")
         if panel.runModal() == .OK, let url = panel.url {
             for card in vm.cards where card.isSelected {
                 vm.setCardImage(for: card.id, url: url)
@@ -3382,7 +3394,7 @@ struct ContentView: View {
         ]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        panel.message = "Choose a .passthm passcode theme package..."
+        panel.message = L("Choose a .passthm passcode theme package...")
         if panel.runModal() == .OK, let url = panel.url {
             vm.inspectPasscodeTheme(url: url)
         }
@@ -3390,8 +3402,8 @@ struct ContentView: View {
     
     private func openPosterPicker() {
         let panel = NSOpenPanel()
-        panel.title = "Choose Poster Image"
-        panel.message = "Select a wallpaper or photo to slice for the passcode keypad..."
+        panel.title = L("Choose Poster Image")
+        panel.message = L("Select a wallpaper or photo to slice for the passcode keypad...")
         panel.allowedContentTypes = [
             UTType.png,
             UTType.jpeg,
@@ -3409,8 +3421,8 @@ struct ContentView: View {
     
     private func openIndividualKeyPicker(for digit: String) {
         let panel = NSOpenPanel()
-        panel.title = "Choose Icon for Key \(digit)"
-        panel.message = "Select an icon or image for key \(digit)..."
+        panel.title = Lf("Choose Icon for Key %@", digit)
+        panel.message = Lf("Select an icon or image for key %@...", digit)
         panel.allowedContentTypes = [
             UTType.png,
             UTType.jpeg,
@@ -3429,13 +3441,13 @@ struct ContentView: View {
     private func openSavePasscodeThemePanel() {
         let keys = vm.effectiveCreatorKeys
         guard !keys.isEmpty else {
-            vm.errorMessage = "Please configure at least one key before exporting."
+            vm.errorMessage = L("Please configure at least one key before exporting.")
             return
         }
         
         let panel = NSSavePanel()
-        panel.title = "Save Passcode Theme"
-        panel.prompt = "Export"
+        panel.title = L("Save Passcode Theme")
+        panel.prompt = L("Export")
         panel.nameFieldStringValue = "CustomTheme.passthm"
         panel.allowedContentTypes = [UTType(filenameExtension: "passthm") ?? .data]
         panel.canCreateDirectories = true
@@ -3443,11 +3455,11 @@ struct ContentView: View {
         if panel.runModal() == .OK, let url = panel.url {
             do {
                 try PasscodeThemeExporter.exportTheme(keys: keys, targetURL: url)
-                vm.statusText = "Theme exported successfully to \(url.lastPathComponent)"
-                vm.log("Exported .passthm to \(url.path)")
+                vm.statusText = Lf("Theme exported successfully to %@", url.lastPathComponent)
+                vm.log(Lf("Exported .passthm to %@", url.path))
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             } catch {
-                vm.errorMessage = "Failed to export theme: \(error.localizedDescription)"
+                vm.errorMessage = Lf("Failed to export theme: %@", error.localizedDescription)
             }
         }
     }

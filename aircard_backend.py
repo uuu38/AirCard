@@ -137,6 +137,8 @@ def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
         print(json.dumps({
             "type": "error",
             "card": card_hash,
+            "code": "prepare_artwork_failed",
+            "params": {},
             "message": "Failed to prepare card artwork"
         }))
         sys.stdout.flush()
@@ -154,6 +156,8 @@ def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
         "card": card_hash,
         "step": step,
         "total": total_steps,
+        "code": "writing_artwork_batch",
+        "params": {"count": len(asset_payloads)},
         "message": f"Writing {len(asset_payloads)} artwork files (fast batch)..."
     }))
     sys.stdout.flush()
@@ -183,6 +187,8 @@ def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
             "card": card_hash,
             "step": step,
             "total": total_steps,
+            "code": "invalidating_cache",
+            "params": {"ext": ext},
             "message": f"Invalidating cache ({ext})..."
         }))
         sys.stdout.flush()
@@ -197,6 +203,8 @@ def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
                 "card": card_hash,
                 "step": step,
                 "total": total_steps,
+                "code": "cache_clear_failed",
+                "params": {"ext": ext},
                 "message": f"Could not clear Wallet cache ({ext}); card was not reported as updated."
             }))
             sys.stdout.flush()
@@ -208,6 +216,8 @@ def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
             "card": card_hash,
             "step": step,
             "total": total_steps,
+            "code": "card_update_failed",
+            "params": {"card": card_hash[:12]},
             "message": f"Failed to update {card_hash[:12]}..."
         }))
         sys.stdout.flush()
@@ -218,6 +228,8 @@ def cmd_flash(udid: str, card_hash: str, image_path: str) -> bool:
         "card": card_hash,
         "step": step,
         "total": total_steps,
+        "code": "card_update_success",
+        "params": {"card": card_hash[:12]},
         "message": f"Successfully updated {card_hash[:12]}..."
     }))
     sys.stdout.flush()
@@ -472,6 +484,8 @@ def cmd_flash_passthm(
             "type": "progress",
             "step": 0,
             "total": total_steps,
+            "code": "passthm_flash_start",
+            "params": {"name": path.stem, "count": total_steps},
             "message": f"Flashing passcode theme '{path.stem}' ({total_steps} assets)..."
         }))
         sys.stdout.flush()
@@ -490,6 +504,8 @@ def cmd_flash_passthm(
                         "step": curr,
                         "total": total_steps,
                         "leaf": leaf,
+                        "code": "passthm_writing",
+                        "params": {"leaf": leaf, "step": curr, "total": total_steps},
                         "message": f"Writing {leaf} ({curr}/{total_steps})..."
                     }))
                     sys.stdout.flush()
@@ -499,6 +515,8 @@ def cmd_flash_passthm(
                 "type": "progress",
                 "step": base_step,
                 "total": total_steps,
+                "code": "passthm_flashing_dir",
+                "params": {"count": len(dir_files), "dir": tdir_name},
                 "message": f"Flashing {len(dir_files)} asset(s) into {tdir_name}..."
             }))
             sys.stdout.flush()
@@ -515,6 +533,8 @@ def cmd_flash_passthm(
                 # If batch failed, fallback to file-by-file write for this directory
                 print(json.dumps({
                     "type": "warning",
+                    "code": "passthm_batch_fallback",
+                    "params": {"dir": tdir_name},
                     "message": f"Batch write notice for {tdir_name}, falling back to file-by-file write..."
                 }))
                 sys.stdout.flush()
@@ -527,6 +547,8 @@ def cmd_flash_passthm(
                         "step": curr,
                         "total": total_steps,
                         "leaf": leaf,
+                        "code": "passthm_writing_fallback",
+                        "params": {"leaf": leaf, "step": curr, "total": total_steps},
                         "message": f"[Fallback] Writing {leaf} ({curr}/{total_steps})..."
                     }))
                     sys.stdout.flush()
@@ -539,6 +561,12 @@ def cmd_flash_passthm(
                 if failed_leaves:
                     print(json.dumps({
                         "type": "error",
+                        "code": "passthm_write_failed",
+                        "params": {
+                            "count": len(failed_leaves),
+                            "dir": tdir_name,
+                            "files": ", ".join(failed_leaves[:5]),
+                        },
                         "message": f"Could not write {len(failed_leaves)} file(s) in {tdir_name}: {', '.join(failed_leaves[:5])}"
                     }))
                     sys.stdout.flush()
@@ -550,6 +578,8 @@ def cmd_flash_passthm(
             "type": "success",
             "step": total_steps,
             "total": total_steps,
+            "code": "passthm_applied",
+            "params": {"name": path.stem},
             "message": f"Passcode theme '{path.stem}' successfully applied! Lock your iPhone to check."
         }))
         sys.stdout.flush()
