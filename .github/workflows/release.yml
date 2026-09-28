@@ -1,0 +1,132 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (leave blank to read from build.sh, e.g. 1.2.4)'
+        required: false
+        type: string
+      force_release:
+        description: 'Force release even if the tag already exists (will update assets)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Universal DMG
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Verify localization coverage
+        run: |
+          python3 tools/check_localizations.py --strict
+
+      - name: Run unit tests
+        run: |
+          python3 -m unittest tests.test_backend_passthm tests.test_card_flash tests.test_read_file -v
+
+      - name: Install DMG packaging tool
+        run: |
+          brew install create-dmg || true
+
+      - name: Resolve release version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VER="${{ inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VER="${GITHUB_REF_NAME#v}"
+          else
+            VER=$(sed -n 's/^APP_VERSION="\${APP_VERSION:-\([^}]*\)}"/\1/p' build.sh)
+          fi
+          BUILD_NUM=$(git rev-list --count HEAD)
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VER}" >> "$GITHUB_OUTPUT"
+          echo "build=${BUILD_NUM}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${VER} (tag v${VER}, build ${BUILD_NUM})"
+
+      - name: Build universal application and DMG
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+          APP_BUILD: ${{ steps.version.outputs.build }}
+          CI: '1'
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Generate SHA-256 checksum
+        run: |
+          cd build
+          shasum -a 256 AirCard.dmg > AirCard.dmg.sha256
+          cat AirCard.dmg.sha256
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AirCard-${{ steps.version.outputs.tag }}-macOS
+          path: |
+            build/AirCard.dmg
+            build/AirCard.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Check if release already exists
+        id: check_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG already exists on GitHub."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG does not exist yet."
+          fi
+
+      - name: Publish GitHub Release
+        if: ${{ steps.check_release.outputs.exists == 'false' || inputs.force_release == true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          VER="${{ steps.version.outputs.version }}"
+
+          CL_ARGS=(
+            "$TAG"
+            build/AirCard.dmg
+            build/AirCard.dmg.sha256
+            --title "AirCard v${VER}"
+            --generate-notes
+          )
+
+          if [ "${{ steps.check_release.outputs.exists }}" = "true" ]; then
+            echo "Updating existing release $TAG..."
+            gh release upload "$TAG" build/AirCard.dmg build/AirCard.dmg.sha256 --clobber
+          else
+            echo "Creating new release $TAG..."
+            gh release create "${CL_ARGS[@]}"
+          fi

@@ -4,6 +4,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Marketing version stamped into the bundle. Release CI overrides these from the
+# pushed tag, while local builds keep the checked-in defaults so a plain
+# `./build.sh` behaves exactly as before.
+APP_VERSION="${APP_VERSION:-1.2.4}"
+APP_BUILD="${APP_BUILD:-7}"
+
 echo "==> [1/6] Building universal helper binaries (device_helper & airtraffic_host)..."
 make clean
 make all
@@ -21,7 +27,7 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$BIN_DIR" "$LIB_DIR"
 
 # Write Info.plist
-cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
+cat << EOF > "${CONTENTS_DIR}/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -54,9 +60,9 @@ cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.2.4</string>
+    <string>${APP_VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>7</string>
+    <string>${APP_BUILD}</string>
     <key>LSMinimumSystemVersion</key>
     <string>12.0</string>
     <key>NSHighResolutionCapable</key>
@@ -140,7 +146,16 @@ cp -R "$APP_DIR" "$DMG_STAGING/"
 rm -f "build/${APP_NAME}.dmg"
 
 if command -v create-dmg >/dev/null 2>&1; then
+    # Headless runners have no Finder session to drive the window layout, and
+    # create-dmg waits on AppleScript until it times out. --skip-jenkins keeps
+    # the run non-interactive while still producing a mountable disk image.
+    CREATE_DMG_CI_ARGS=()
+    if [ -n "${GITHUB_ACTIONS:-}${CI:-}" ]; then
+        CREATE_DMG_CI_ARGS+=(--skip-jenkins)
+    fi
+
     create-dmg \
+        "${CREATE_DMG_CI_ARGS[@]}" \
         --volname "AirCard" \
         --background "dmg_assets/background_700.png" \
         --window-pos 200 120 \
@@ -161,4 +176,5 @@ fi
 
 echo "============================================================"
 echo "🎉 SUCCESS: build/${APP_NAME}.dmg is ready!"
+echo "    Version ${APP_VERSION} (build ${APP_BUILD})"
 echo "============================================================"

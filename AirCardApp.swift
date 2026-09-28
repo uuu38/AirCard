@@ -2,6 +2,21 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+// MARK: - App Metadata
+
+enum AppMetadata {
+    /// Marketing version string (e.g. "1.2.4") read from Info.plist, with a
+    /// fallback so standalone runs outside a bundle still display something.
+    static var shortVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.2.4"
+    }
+
+    /// Build number (e.g. "7").
+    static var buildVersion: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+    }
+}
+
 // MARK: - Models
 
 struct DeviceInfo: Codable {
@@ -1818,7 +1833,7 @@ struct ContentView: View {
                     Text("AirCard")
                         .font(.title2)
                         .fontWeight(.bold)
-                    Text("v1.2.4")
+                    Text(verbatim: "v\(AppMetadata.shortVersion)")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
